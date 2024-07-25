@@ -7,6 +7,11 @@ use itertools::Itertools;
 use linked_hash_set::LinkedHashSet;
 use thiserror::Error;
 
+#[derive(Clone, Debug, Default, Eq, new, PartialEq)]
+pub struct PathMetadata {
+    tags: HashSet<String>,
+}
+
 /// A raw tag.
 #[derive(
     Clone,
@@ -40,12 +45,12 @@ pub struct ResolvedTags {
 }
 
 #[derive(Debug, Error)]
-pub enum LoadError {
+pub enum IoTagError {
     #[error("unable to access this executable's directory")]
     Resolve(io::Error),
-    #[error("unable to load due to i/o errors")]
+    #[error("i/o errors")]
     Io(#[from] io::Error),
-    #[error("unable to load due to (de)serialization errors")]
+    #[error("(de)serialization error")]
     Serde(#[from] serde_json::Error),
 }
 
@@ -55,7 +60,7 @@ pub enum ResolveError {
     Load {
         path: ResolvePath,
         #[source]
-        source: LoadError,
+        source: IoTagError,
     },
     #[error("unable to load due to (de)serialization errors")]
     Cyclic { path: ResolvePath },
@@ -76,6 +81,21 @@ impl RawTag {
         }
     }
 
+    #[inline]
+    pub fn path_by_name<P: AsRef<Path>>(name: P) -> io::Result<PathBuf> {
+        let name = name.as_ref();
+        Ok(if name.is_absolute() {
+            name.into()
+        } else {
+            let mut path = std::env::current_exe()?;
+            path.pop();
+            path.push(".tags");
+            path.push(name);
+            path.set_extension("json");
+            path
+        })
+    }
+
     /// Loads a raw tag.
     ///
     /// Resolution starts relative to the current executable's directory or the
@@ -88,20 +108,16 @@ impl RawTag {
     ///  * I/O error when reading bytes
     ///  * parsing error
     #[inline]
-    pub fn load<P: AsRef<Path>>(name: P) -> Result<Self, LoadError> {
-        let name = name.as_ref();
-        let path = if name.is_absolute() {
-            name.into()
-        } else {
-            let mut path = std::env::current_exe().map_err(LoadError::Resolve)?;
-            path.pop();
-            path.push(".tags");
-            path.push(name);
-            path.set_extension("json");
-            path
-        };
-        dbg!(&path);
+    pub fn load<P: AsRef<Path>>(name: P) -> Result<Self, IoTagError> {
+        let path = Self::path_by_name(name).map_err(IoTagError::Resolve)?;
         Ok(serde_json::from_slice(&std::fs::read(path)?)?)
+    }
+
+    #[inline]
+    pub fn save<P: AsRef<Path>>(&self, name: P) -> Result<(), IoTagError> {
+        let path = Self::path_by_name(name).map_err(IoTagError::Resolve)?;
+        std::fs::write(path, serde_json::to_vec_pretty(self)?)?;
+        Ok(())
     }
 }
 
@@ -195,6 +211,21 @@ impl Iterator for ResolvePath {
     }
 }
 
+impl PathMetadata {
+    #[inline]
+    pub fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        let path = path.as_ref().with_extension("tag.list");
+        let tags = std::fs::read_to_string(path)?.lines().map_into().collect();
+        Ok(Self::new(tags))
+    }
+
+    #[inline]
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        std::fs::write(path, self.tags.iter().join("\n"))?;
+        Ok(())
+    }
+}
+
 impl TryFrom<RawTag> for ResolvedTags {
     type Error = ResolveError;
 
@@ -218,8 +249,8 @@ impl TryFrom<RawTag> for ResolvedTags {
 
                 let tag = match RawTag::load(key) {
                     Ok(tag) => Some(tag),
-                    Err(LoadError::Resolve(_)) => None,
-                    Err(LoadError::Io(cause))
+                    Err(IoTagError::Resolve(_)) => None,
+                    Err(IoTagError::Io(cause))
                         if matches!(cause.kind(), io::ErrorKind::NotFound) =>
                     {
                         None
