@@ -46,10 +46,15 @@ impl Subcommand {
     fn execute(self) -> Result<(), self::Error> {
         match self {
             Self::Get { tags: query } => {
-                let paths = ResolvedTags::try_from(RawTag::query(query.into_iter().collect()))
+                let mut paths = ResolvedTags::try_from(RawTag::query(query.into_iter().collect()))
                     .expect("TODO")
-                    .intersection();
-
+                    .intersection()
+                    .into_iter()
+                    .collect_vec();
+                paths.sort();
+                for path in paths {
+                    println!("{}", path.display());
+                }
                 Ok(())
             }
             it => todo!("{it:#?}"),
