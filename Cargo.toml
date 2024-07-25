@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 clap = { version = "4.5.9", features = ["derive"] }
 derive-new = "0.6.0"
+getset = "0.1.2"
 itertools = "0.13.0"
 linked_hash_set = "0.1.4"
 rayon = "1.10.0"

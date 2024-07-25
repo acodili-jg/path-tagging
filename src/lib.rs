@@ -8,7 +8,19 @@ use linked_hash_set::LinkedHashSet;
 use thiserror::Error;
 
 /// A raw tag.
-#[derive(Clone, Debug, Default, Eq, new, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    Eq,
+    new,
+    PartialEq,
+    getset::Getters,
+    getset::MutGetters,
+    serde::Deserialize,
+    serde::Serialize,
+)]
+#[getset(get = "pub", get_mut = "pub")]
 pub struct RawTag {
     /// Tags whose paths are included in this tag. This is the inverse of
     /// [`inheritedTags`].
@@ -20,7 +32,8 @@ pub struct RawTag {
     paths: HashSet<PathBuf>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, getset::Getters, getset::MutGetters)]
+#[getset(get = "pub", get_mut = "pub")]
 pub struct ResolvedTags {
     raw: RawTag,
     tags: HashMap<String, RawTag>,
@@ -89,39 +102,6 @@ impl RawTag {
         };
         dbg!(&path);
         Ok(serde_json::from_slice(&std::fs::read(path)?)?)
-    }
-
-    #[inline]
-    #[must_use]
-    pub const fn include_tags(&self) -> &HashSet<String> {
-        &self.include_tags
-    }
-
-    #[inline]
-    #[must_use]
-    pub const fn inherited_tags(&self) -> &HashSet<String> {
-        &self.inherited_tags
-    }
-
-    #[inline]
-    #[must_use]
-    pub const fn paths(&self) -> &HashSet<PathBuf> {
-        &self.paths
-    }
-
-    #[inline]
-    pub fn include_tags_mut(&mut self) -> &HashSet<String> {
-        &mut self.include_tags
-    }
-
-    #[inline]
-    pub fn inherited_tags_mut(&mut self) -> &HashSet<String> {
-        &mut self.inherited_tags
-    }
-
-    #[inline]
-    pub fn paths_mut(&mut self) -> &HashSet<PathBuf> {
-        &mut self.paths
     }
 }
 
