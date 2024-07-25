@@ -3,7 +3,7 @@ use std::io;
 use clap::Parser;
 use thiserror::Error;
 
-use path_tagging::{RawTag, ResolvedTag};
+use path_tagging::{RawTag, ResolvedTags};
 
 fn main() -> Result<(), self::Error> {
     let args = Arguments::parse();
@@ -42,7 +42,7 @@ impl Subcommand {
     fn execute(self) -> Result<(), self::Error> {
         match self {
             Self::Get { tags: query } => {
-                let paths = ResolvedTag::try_from(RawTag::query(query.into_iter().collect()))
+                let paths = ResolvedTags::try_from(RawTag::query(query.into_iter().collect()))
                     .expect("TODO")
                     .intersection();
 

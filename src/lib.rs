@@ -1,8 +1,6 @@
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 
 use derive_new::new;
 use itertools::Itertools;
@@ -10,7 +8,7 @@ use linked_hash_set::LinkedHashSet;
 use thiserror::Error;
 
 /// A raw tag.
-#[derive(Debug, Default, Eq, new, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Default, Eq, new, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct RawTag {
     /// Tags whose paths are included in this tag. This is the inverse of
     /// [`inheritedTags`].
@@ -22,11 +20,10 @@ pub struct RawTag {
     paths: HashSet<PathBuf>,
 }
 
-#[derive(Debug)]
-pub struct ResolvedTag {
-    include_tags: HashMap<String, Rc<RefCell<ResolvedTag>>>,
-    inherited_tags: HashMap<String, Rc<RefCell<ResolvedTag>>>,
-    paths: HashSet<PathBuf>,
+#[derive(Clone, Debug)]
+pub struct ResolvedTags {
+    raw: RawTag,
+    tags: HashMap<String, RawTag>,
 }
 
 #[derive(Debug, Error)]
@@ -130,45 +127,56 @@ impl RawTag {
 
 impl ResolvePath {
     #[inline]
-    fn from(inner: LinkedHashSet<String>) -> Self {
+    fn new(path: LinkedHashSet<String>, cause: String) -> Self {
         // FIXME: is there a better way to get an at-least debuggable iterator?
-        let inner = inner.into_iter().collect_vec().into_iter();
-        Self { inner }
+        let mut inner = path.into_iter().collect_vec();
+        inner.push(cause);
+        inner.into_iter().collect()
     }
 }
 
-impl ResolvedTag {
+impl ResolvedTags {
     #[must_use]
     pub fn contains(&self, path: &PathBuf) -> bool {
-        self.paths.contains(path)
+        self.raw.paths.contains(path)
             || self
+                .raw
                 .include_tags
-                .values()
-                .any(|tag| tag.borrow().contains(path))
+                .iter()
+                .filter_map(|key| self.tags.get(key))
+                .any(|tag| tag.paths.contains(path))
     }
 
     #[inline]
     #[must_use]
     pub fn union(&self) -> HashSet<PathBuf> {
+        Self::union_at(&self.tags, &self.raw)
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn union_at(tags: &HashMap<String, RawTag>, tag: &RawTag) -> HashSet<PathBuf> {
         let mut set = HashSet::new();
-        self.union_helper(&mut set);
+        Self::union_helper(tags, tag, &mut set);
         set
     }
 
-    fn union_helper(&self, set: &mut HashSet<PathBuf>) {
-        for include in self.include_tags.values() {
-            include.borrow().union_helper(set);
+    fn union_helper(tags: &HashMap<String, RawTag>, raw: &RawTag, set: &mut HashSet<PathBuf>) {
+        for tag in raw.include_tags.iter().filter_map(|key| tags.get(key)) {
+            Self::union_helper(tags, tag, set);
         }
-        set.extend(self.paths.iter().cloned());
+        set.extend(raw.paths.iter().cloned());
     }
 
     #[must_use]
     pub fn intersection(&self) -> HashSet<PathBuf> {
         dbg!(self);
         let mut set = self
+            .raw
             .include_tags
-            .values()
-            .map(|tag| tag.borrow().union())
+            .iter()
+            .filter_map(|key| self.tags.get(key))
+            .map(|key| Self::union_at(&self.tags, key))
             .tree_reduce(|mut lhs, mut rhs| {
                 if rhs.capacity() < lhs.capacity() {
                     std::mem::swap(&mut lhs, &mut rhs);
@@ -178,19 +186,23 @@ impl ResolvedTag {
             })
             .unwrap_or_default();
 
-        set.extend(self.paths.iter().cloned());
+        set.extend(self.raw.paths.iter().cloned());
         set
     }
 }
 
-impl From<ResolvedTag> for RawTag {
+impl From<ResolvedTags> for RawTag {
     #[inline]
-    fn from(resolved: ResolvedTag) -> Self {
-        Self {
-            include_tags: resolved.include_tags.into_keys().collect(),
-            inherited_tags: resolved.inherited_tags.into_keys().collect(),
-            paths: resolved.paths,
-        }
+    fn from(resolved: ResolvedTags) -> Self {
+        resolved.raw
+    }
+}
+
+impl FromIterator<String> for ResolvePath {
+    #[inline]
+    fn from_iter<T: IntoIterator<Item = String>>(iter: T) -> Self {
+        let inner = iter.into_iter().collect_vec().into_iter();
+        Self { inner }
     }
 }
 
@@ -203,77 +215,54 @@ impl Iterator for ResolvePath {
     }
 }
 
-impl TryFrom<RawTag> for ResolvedTag {
+impl TryFrom<RawTag> for ResolvedTags {
     type Error = ResolveError;
 
     #[inline]
     fn try_from(raw: RawTag) -> Result<Self, Self::Error> {
-        fn get_tag(
-            path: &mut Option<LinkedHashSet<String>>,
-            tags: &mut HashMap<String, Rc<RefCell<ResolvedTag>>>,
-            key: String,
-        ) -> Result<(String, Rc<RefCell<ResolvedTag>>), ResolveError> {
-            // ASSERTION: path should not be none when there is no error.
-
-            if unsafe { path.as_ref().unwrap_unchecked() }.contains(&key) {
-                return Err(ResolveError::new_cyclic(ResolvePath::from(unsafe {
-                    path.take().unwrap_unchecked()
-                })));
-            }
-
-            if let Some(tag) = tags.get(&key) {
-                return Ok((key, Rc::clone(tag)));
-            }
-
-            let raw = match RawTag::load(&key) {
-                Ok(raw) => raw,
-                Err(LoadError::Resolve(_)) => RawTag::default(),
-                Err(LoadError::Io(cause)) if matches!(cause.kind(), io::ErrorKind::NotFound) => {
-                    RawTag::default()
-                }
-                Err(source) => {
-                    return Err(ResolveError::new_load(
-                        ResolvePath::from(unsafe { path.take().unwrap_unchecked() }),
-                        source,
-                    ))
-                }
-            };
-
-            unsafe { path.as_mut().unwrap_unchecked() }.insert(key);
-            let tag = Rc::new(RefCell::new(helper(path, tags, raw)?));
-
-            // ASSERTION: There will always be a value *before* but each
-            //            `get_tag` **should** only pop once here.
-            let key = unsafe {
-                path.as_mut()
-                    .unwrap_unchecked()
-                    .pop_back()
-                    .unwrap_unchecked()
-            };
-            tags.insert(key.clone(), Rc::clone(&tag));
-            Ok((key, tag))
-        }
-
         fn helper(
-            path: &mut Option<LinkedHashSet<String>>,
-            tags: &mut HashMap<String, Rc<RefCell<ResolvedTag>>>,
-            raw: RawTag,
-        ) -> Result<ResolvedTag, ResolveError> {
-            Ok(ResolvedTag {
-                include_tags: raw
-                    .include_tags
-                    .into_iter()
-                    .map(|key| get_tag(path, tags, key))
-                    .try_collect()?,
-                inherited_tags: raw
-                    .inherited_tags
-                    .into_iter()
-                    .map(|key| get_tag(path, tags, key))
-                    .try_collect()?,
-                paths: raw.paths,
-            })
+            mut path: LinkedHashSet<String>,
+            tags: &mut HashMap<String, RawTag>,
+            raw: &RawTag,
+        ) -> Result<LinkedHashSet<String>, ResolveError> {
+            let keys = raw.include_tags.union(raw.inherited_tags());
+            for key in keys {
+                if path.contains(key) {
+                    return Err(ResolveError::new_cyclic(ResolvePath::new(
+                        path,
+                        key.clone(),
+                    )));
+                }
+
+                path.insert(key.clone());
+
+                let tag = match RawTag::load(key) {
+                    Ok(tag) => Some(tag),
+                    Err(LoadError::Resolve(_)) => None,
+                    Err(LoadError::Io(cause))
+                        if matches!(cause.kind(), io::ErrorKind::NotFound) =>
+                    {
+                        None
+                    }
+                    Err(cause) => {
+                        return Err(ResolveError::new_load(path.into_iter().collect(), cause))
+                    }
+                };
+
+                let key = path.pop_back();
+                if let Some(tag) = tag {
+                    path = helper(path, tags, &tag)?;
+                    // SAFETY: assert insert was called once before this
+                    let key = unsafe { key.unwrap_unchecked() };
+                    tags.insert(key, tag);
+                }
+            }
+            Ok(path)
         }
 
-        helper(&mut Some(LinkedHashSet::new()), &mut HashMap::new(), raw)
+        let path = LinkedHashSet::new();
+        let mut tags = HashMap::new();
+        helper(path, &mut tags, &raw)?;
+        Ok(Self { raw, tags })
     }
 }
