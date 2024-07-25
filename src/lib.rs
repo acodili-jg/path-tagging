@@ -7,7 +7,8 @@ use itertools::Itertools;
 use linked_hash_set::LinkedHashSet;
 use thiserror::Error;
 
-#[derive(Clone, Debug, Default, Eq, new, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, new, PartialEq, getset::Getters, getset::MutGetters)]
+#[getset(get = "pub", get_mut = "pub")]
 pub struct PathMetadata {
     tags: HashSet<String>,
 }
@@ -223,6 +224,7 @@ impl PathMetadata {
 
     #[inline]
     pub fn save<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        let path = path.as_ref().with_extension("tag.list");
         std::fs::write(path, self.tags.iter().join("\n"))?;
         Ok(())
     }
