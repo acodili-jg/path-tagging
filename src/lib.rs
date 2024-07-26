@@ -167,22 +167,26 @@ impl ResolvedTags {
 
     #[must_use]
     pub fn intersection(&self) -> HashSet<PathBuf> {
+        fn fallible_intersection(
+            lhs: Option<HashSet<PathBuf>>,
+            rhs: Option<HashSet<PathBuf>>,
+        ) -> Option<HashSet<PathBuf>> {
+            let mut lhs = lhs?;
+            let mut rhs = rhs?;
+            if rhs.capacity() < lhs.capacity() {
+                std::mem::swap(&mut lhs, &mut rhs);
+            }
+            lhs.retain(|path| rhs.contains(path));
+            Some(lhs)
+        }
+
         let mut set = self
             .raw
             .include_tags
             .iter()
-            .map(|key| self.tags.get(key))
-            .map(|key| Some(Self::union_at(&self.tags, key?)))
-            .tree_reduce(|lhs, rhs| {
-                let mut lhs = lhs?;
-                let mut rhs = rhs?;
-                if rhs.capacity() < lhs.capacity() {
-                    std::mem::swap(&mut lhs, &mut rhs);
-                }
-                lhs.retain(|path| rhs.contains(path));
-                Some(lhs)
-            })
-            .unwrap_or_default()
+            .map(|key| Some(Self::union_at(&self.tags, self.tags.get(key)?)))
+            .tree_reduce(fallible_intersection)
+            .flatten()
             .unwrap_or_default();
 
         set.extend(self.raw.paths.iter().cloned());
