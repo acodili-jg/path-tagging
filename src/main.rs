@@ -99,7 +99,7 @@ impl Subcommand {
             Self::List { paths } => Self::execute_list(paths),
             Self::Tag { paths, tags } => Self::execute_tag(paths, tags),
             Self::Untag { paths, tags } => Self::execute_untag(paths, tags),
-            it => todo!("{it:#?}"),
+            Self::Clear { paths } => Self::execute_clear(paths),
         }
     }
 
@@ -119,9 +119,8 @@ impl Subcommand {
     fn execute_list(paths: Paths) {
         let tags = paths
             .filter_map(load_meta)
-            .map(|meta| meta.tags)
-            .tree_reduce(set_union)
-            .unwrap_or_default();
+            .flat_map(|meta| meta.tags().clone())
+            .collect();
         match ResolvedTags::try_from(RawTag::query(tags)) {
             Ok(tag) => {
                 let mut tags = Vec::from_iter(tag.all_tags());
@@ -171,6 +170,38 @@ impl Subcommand {
                 meta.tags_mut().remove(tag);
             }
             save_meta(path, &meta);
+        }
+    }
+
+    fn execute_clear(paths: Paths) {
+        let metas = paths
+            .filter_map(|path| Some((load_meta(&path)?, path)))
+            .collect_vec();
+        let tags = metas
+            .iter()
+            .flat_map(|(meta, _)| meta.tags().clone())
+            .collect();
+        let mut query = match ResolvedTags::try_from(RawTag::query(tags)) {
+            Ok(query) => query,
+            Err(cause) => {
+                log::error!("Unable retrieve tag data for clearing: {cause}");
+                return;
+            }
+        };
+
+        for (mut meta, path) in metas {
+            for key in meta.tags_mut().drain() {
+                if let Some(tag) = query.tags_mut().get_mut(&key) {
+                    tag.paths_mut().remove(&path);
+                }
+            }
+            save_meta(path, &meta);
+        }
+
+        for key in query.raw().include_tags() {
+            if let Some(tag) = query.tags().get(key) {
+                save_tag(key, tag);
+            }
         }
     }
 }

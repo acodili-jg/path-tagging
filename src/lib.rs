@@ -10,7 +10,7 @@ use thiserror::Error;
 #[derive(Clone, Debug, Default, Eq, new, PartialEq, getset::Getters, getset::MutGetters)]
 #[getset(get = "pub", get_mut = "pub")]
 pub struct PathMetadata {
-    pub tags: HashSet<String>,
+    tags: HashSet<String>,
 }
 
 /// A raw tag.
