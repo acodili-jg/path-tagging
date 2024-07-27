@@ -10,7 +10,7 @@ use thiserror::Error;
 #[derive(Clone, Debug, Default, Eq, new, PartialEq, getset::Getters, getset::MutGetters)]
 #[getset(get = "pub", get_mut = "pub")]
 pub struct PathMetadata {
-    tags: HashSet<String>,
+    pub tags: HashSet<String>,
 }
 
 /// A raw tag.
@@ -200,6 +200,29 @@ impl ResolvedTags {
             .unwrap_or_default();
 
         set.extend(self.raw.paths.iter().cloned());
+        set
+    }
+
+    #[must_use]
+    pub fn all_tags(&self) -> HashSet<String> {
+        fn helper(tags: &mut HashSet<String>, raws: &HashMap<String, RawTag>, raw: &RawTag) {
+            for tag in raw.inherited_tags() {
+                if tags.insert(tag.clone()) {
+                    if let Some(raw) = raws.get(tag) {
+                        helper(tags, raws, raw);
+                    }
+                }
+            }
+        }
+
+        let mut set = HashSet::new();
+        for tag in self.raw.include_tags() {
+            if set.insert(tag.clone()) {
+                if let Some(raw) = self.tags.get(tag) {
+                    helper(&mut set, &self.tags, raw);
+                }
+            }
+        }
         set
     }
 }

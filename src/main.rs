@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -94,17 +95,18 @@ enum Subcommand {
 impl Subcommand {
     fn execute(self) {
         match self {
-            Self::Get { tags: query } => Self::execute_get(query),
-            Self::Tag { paths, tags } => Self::execute_tag(paths, &tags),
-            Self::Untag { paths, tags } => Self::execute_untag(paths, &tags),
+            Self::Get { tags } => Self::execute_get(tags),
+            Self::List { paths } => Self::execute_list(paths),
+            Self::Tag { paths, tags } => Self::execute_tag(paths, tags),
+            Self::Untag { paths, tags } => Self::execute_untag(paths, tags),
             it => todo!("{it:#?}"),
         }
     }
 
     fn execute_get(query: Vec<String>) {
-        match ResolvedTags::try_from(RawTag::query(query.into_iter().collect())) {
+        match ResolvedTags::try_from(RawTag::query(HashSet::from_iter(query))) {
             Ok(paths) => {
-                let mut paths = paths.intersection().into_iter().collect_vec();
+                let mut paths = Vec::from_iter(paths.intersection());
                 paths.sort();
                 for path in paths {
                     println!("{}", path.display());
@@ -114,13 +116,31 @@ impl Subcommand {
         };
     }
 
-    fn execute_tag(paths: Paths, tags: &Vec<String>) {
+    fn execute_list(paths: Paths) {
+        let tags = paths
+            .filter_map(load_meta)
+            .map(|meta| meta.tags)
+            .tree_reduce(set_union)
+            .unwrap_or_default();
+        match ResolvedTags::try_from(RawTag::query(tags)) {
+            Ok(tag) => {
+                let mut tags = Vec::from_iter(tag.all_tags());
+                tags.sort();
+                for tag in tags {
+                    println!("{tag}");
+                }
+            }
+            Err(cause) => log::error!("Unable list tags: {cause}"),
+        };
+    }
+
+    fn execute_tag(paths: Paths, tags: Vec<String>) {
         for key in &tags {
             let Some(mut tag) = load_tag(key) else {
                 continue;
             };
             tag.paths_mut().extend(paths.clone());
-            save_tag(key, tag);
+            save_tag(key, &tag);
         }
 
         for path in paths {
@@ -128,11 +148,11 @@ impl Subcommand {
                 continue;
             };
             meta.tags_mut().extend(tags.iter().cloned());
-            save_meta(path, meta);
+            save_meta(path, &meta);
         }
     }
 
-    fn execute_untag(paths: Paths, tags: &Vec<String>) {
+    fn execute_untag(paths: Paths, tags: Vec<String>) {
         for key in &tags {
             let Some(mut tag) = load_tag(key) else {
                 continue;
@@ -140,7 +160,7 @@ impl Subcommand {
             for path in paths.clone() {
                 tag.paths_mut().remove(&path);
             }
-            save_tag(key, tag);
+            save_tag(key, &tag);
         }
 
         for path in paths {
@@ -150,7 +170,7 @@ impl Subcommand {
             for tag in &tags {
                 meta.tags_mut().remove(tag);
             }
-            save_meta(path, meta);
+            save_meta(path, &meta);
         }
     }
 }
@@ -176,8 +196,7 @@ fn load_meta<P: AsRef<Path>>(path: P) -> Option<PathMetadata> {
     }
 }
 
-fn load_tag<P: AsRef<Path>>(key: P) -> Option<RawTag> {
-    let key = key.as_ref();
+fn load_tag(key: &str) -> Option<RawTag> {
     match RawTag::load(key) {
         Ok(tag) => Some(tag),
         Err(IoTagError::Io(cause)) if matches!(cause.kind(), io::ErrorKind::NotFound) => {
@@ -192,8 +211,9 @@ fn load_tag<P: AsRef<Path>>(key: P) -> Option<RawTag> {
 }
 
 #[inline]
-fn save_meta<P: AsRef<Path>>(path: P, meta: PathMetadata) {
-    if let Err(cause) = meta.save(&path) {
+fn save_meta<P: AsRef<Path>>(path: P, meta: &PathMetadata) {
+    let path = path.as_ref();
+    if let Err(cause) = meta.save(path) {
         log::warn!(
             "Unable to save metadata for path {}: {cause}",
             path.display()
@@ -202,9 +222,19 @@ fn save_meta<P: AsRef<Path>>(path: P, meta: PathMetadata) {
 }
 
 #[inline]
-fn save_tag<P: AsRef<Path>>(key: P, tag: RawTag) {
+fn save_tag(key: &str, tag: &RawTag) {
     if let Err(cause) = tag.save(key) {
         log::warn!("Unable to save tag {key:?}: {cause}");
+    }
+}
+
+fn set_union(mut lhs: HashSet<String>, mut rhs: HashSet<String>) -> HashSet<String> {
+    if lhs.capacity() >= rhs.capacity() {
+        lhs.extend(rhs);
+        lhs
+    } else {
+        rhs.extend(lhs);
+        rhs
     }
 }
 
