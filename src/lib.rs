@@ -117,8 +117,18 @@ impl RawTag {
     #[inline]
     pub fn save<P: AsRef<Path>>(&self, name: P) -> Result<(), IoTagError> {
         let path = Self::resolve(name).map_err(IoTagError::Resolve)?;
-        std::fs::write(path, serde_json::to_vec_pretty(self)?)?;
+        if self.is_empty() {
+            std::fs::remove_file(path)?;
+        } else {
+            std::fs::write(path, serde_json::to_vec_pretty(self)?)?;
+        }
         Ok(())
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.include_tags.is_empty() && self.inherited_tags.is_empty() && self.paths.is_empty()
     }
 }
 
@@ -243,8 +253,18 @@ impl PathMetadata {
     #[inline]
     pub fn save<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
         let path = Self::resolve(path.as_ref());
-        std::fs::write(path, self.tags.iter().join("\n"))?;
+        if self.is_empty() {
+            std::fs::remove_file(path)?;
+        } else {
+            std::fs::write(path, self.tags.iter().join("\n"))?;
+        }
         Ok(())
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.tags.is_empty()
     }
 }
 
