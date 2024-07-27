@@ -35,8 +35,8 @@ enum Subcommand {
     /// none are found.
     Get {
         /// The tags that paths must have.
-        #[arg(required=true)]
-        tags: Vec<String>
+        #[arg(required = true)]
+        tags: Vec<String>,
     },
 
     /// Lists all the tags that occur in the given paths.
@@ -48,7 +48,7 @@ enum Subcommand {
         ///
         /// On most Unix platforms, the separator is `:` and on Windows it is
         /// `;`.
-        paths: Paths
+        paths: Paths,
     },
 
     /// Tag paths.
@@ -87,7 +87,7 @@ enum Subcommand {
         ///
         /// On most Unix platforms, the separator is `:` and on Windows it is
         /// `;`.
-        paths: Paths
+        paths: Paths,
     },
 }
 

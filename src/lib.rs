@@ -83,7 +83,7 @@ impl RawTag {
     }
 
     #[inline]
-    pub fn path_by_name<P: AsRef<Path>>(name: P) -> io::Result<PathBuf> {
+    pub fn resolve<P: AsRef<Path>>(name: P) -> io::Result<PathBuf> {
         let name = name.as_ref();
         Ok(if name.is_absolute() {
             name.into()
@@ -110,13 +110,13 @@ impl RawTag {
     ///  * parsing error
     #[inline]
     pub fn load<P: AsRef<Path>>(name: P) -> Result<Self, IoTagError> {
-        let path = Self::path_by_name(name).map_err(IoTagError::Resolve)?;
+        let path = Self::resolve(name).map_err(IoTagError::Resolve)?;
         Ok(serde_json::from_slice(&std::fs::read(path)?)?)
     }
 
     #[inline]
     pub fn save<P: AsRef<Path>>(&self, name: P) -> Result<(), IoTagError> {
-        let path = Self::path_by_name(name).map_err(IoTagError::Resolve)?;
+        let path = Self::resolve(name).map_err(IoTagError::Resolve)?;
         std::fs::write(path, serde_json::to_vec_pretty(self)?)?;
         Ok(())
     }
@@ -219,16 +219,30 @@ impl Iterator for ResolvePath {
 }
 
 impl PathMetadata {
+    pub const EXTENSION_PREFIX: &'static str = ".tag.list";
+
+    #[inline]
+    pub fn resolve<P: AsRef<Path>>(path: P) -> PathBuf {
+        let path = path.as_ref();
+        if path.is_file() {
+            let mut file_name = path.file_name().unwrap_or_default().to_os_string();
+            file_name.push(Self::EXTENSION_PREFIX);
+            path.with_file_name(file_name)
+        } else {
+            path.join(Self::EXTENSION_PREFIX)
+        }
+    }
+
     #[inline]
     pub fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let path = path.as_ref().with_extension("tag.list");
+        let path = Self::resolve(path.as_ref());
         let tags = std::fs::read_to_string(path)?.lines().map_into().collect();
         Ok(Self::new(tags))
     }
 
     #[inline]
     pub fn save<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
-        let path = path.as_ref().with_extension("tag.list");
+        let path = Self::resolve(path.as_ref());
         std::fs::write(path, self.tags.iter().join("\n"))?;
         Ok(())
     }
