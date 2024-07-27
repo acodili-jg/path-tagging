@@ -94,89 +94,63 @@ enum Subcommand {
 impl Subcommand {
     fn execute(self) {
         match self {
-            Self::Get { tags: query } => {
-                let paths = match ResolvedTags::try_from(RawTag::query(query.into_iter().collect()))
-                {
-                    Ok(paths) => paths,
-                    Err(cause) => {
-                        log::error!("Unable to search by tag: {cause}");
-                        return;
-                    }
-                };
+            Self::Get { tags: query } => Self::execute_get(query),
+            Self::Tag { paths, tags } => Self::execute_tag(paths, &tags),
+            Self::Untag { paths, tags } => Self::execute_untag(paths, &tags),
+            it => todo!("{it:#?}"),
+        }
+    }
+
+    fn execute_get(query: Vec<String>) {
+        match ResolvedTags::try_from(RawTag::query(query.into_iter().collect())) {
+            Ok(paths) => {
                 let mut paths = paths.intersection().into_iter().collect_vec();
                 paths.sort();
                 for path in paths {
                     println!("{}", path.display());
                 }
             }
-            Self::Tag { paths, tags } => {
-                for key in &tags {
-                    let Some(mut tag) = load_tag(key) else {
-                        continue;
-                    };
-                    tag.paths_mut().extend(paths.clone());
-                    if let Err(cause) = tag.save(key) {
-                        log::warn!("Unable to save tag {key:?}: {cause}");
-                    }
-                }
+            Err(cause) => log::error!("Unable to search by tag: {cause}"),
+        };
+    }
 
-                for path in paths {
-                    let Some(mut meta) = load_meta(&path) else {
-                        continue;
-                    };
-                    meta.tags_mut().extend(tags.iter().cloned());
-                    if let Err(cause) = meta.save(&path) {
-                        log::warn!(
-                            "Unable to save metadata for path {}: {cause}",
-                            path.display()
-                        );
-                    }
-                }
-            }
-            Self::Untag { paths, tags } => {
-                for key in &tags {
-                    let Some(mut tag) = load_tag(key) else {
-                        continue;
-                    };
-                    for path in paths.clone() {
-                        tag.paths_mut().remove(&path);
-                    }
-                    if let Err(cause) = tag.save(key) {
-                        log::warn!("Unable to save tag {key:?}: {cause}");
-                    }
-                }
+    fn execute_tag(paths: Paths, tags: &Vec<String>) {
+        for key in &tags {
+            let Some(mut tag) = load_tag(key) else {
+                continue;
+            };
+            tag.paths_mut().extend(paths.clone());
+            save_tag(key, tag);
+        }
 
-                for path in paths {
-                    let Some(mut meta) = load_meta(&path) else {
-                        continue;
-                    };
-                    for tag in &tags {
-                        meta.tags_mut().remove(tag);
-                    }
-                    if let Err(cause) = meta.save(&path) {
-                        log::warn!(
-                            "Unable to save metadata for path {}: {cause}",
-                            path.display()
-                        );
-                    }
-                }
-            }
-            it => todo!("{it:#?}"),
+        for path in paths {
+            let Some(mut meta) = load_meta(&path) else {
+                continue;
+            };
+            meta.tags_mut().extend(tags.iter().cloned());
+            save_meta(path, meta);
         }
     }
-}
 
-fn load_tag<P: AsRef<Path>>(key: P) -> Option<RawTag> {
-    let key = key.as_ref();
-    match RawTag::load(key) {
-        Ok(tag) => Some(tag),
-        Err(IoTagError::Io(cause)) if matches!(cause.kind(), io::ErrorKind::NotFound) => {
-            log::info!("Fallback to default for tag {key:?} since it doesn't exist: {cause}");
-            Some(RawTag::default())
+    fn execute_untag(paths: Paths, tags: &Vec<String>) {
+        for key in &tags {
+            let Some(mut tag) = load_tag(key) else {
+                continue;
+            };
+            for path in paths.clone() {
+                tag.paths_mut().remove(&path);
+            }
+            save_tag(key, tag);
         }
-        Err(cause) => {
-            log::warn!("Unable to load tag {key:?}: {cause}");
-            None
+
+        for path in paths {
+            let Some(mut meta) = load_meta(&path) else {
+                continue;
+            };
+            for tag in &tags {
+                meta.tags_mut().remove(tag);
+            }
+            save_meta(path, meta);
         }
     }
 }
@@ -199,6 +173,38 @@ fn load_meta<P: AsRef<Path>>(path: P) -> Option<PathMetadata> {
             );
             None
         }
+    }
+}
+
+fn load_tag<P: AsRef<Path>>(key: P) -> Option<RawTag> {
+    let key = key.as_ref();
+    match RawTag::load(key) {
+        Ok(tag) => Some(tag),
+        Err(IoTagError::Io(cause)) if matches!(cause.kind(), io::ErrorKind::NotFound) => {
+            log::info!("Fallback to default for tag {key:?} since it doesn't exist: {cause}");
+            Some(RawTag::default())
+        }
+        Err(cause) => {
+            log::warn!("Unable to load tag {key:?}: {cause}");
+            None
+        }
+    }
+}
+
+#[inline]
+fn save_meta<P: AsRef<Path>>(path: P, meta: PathMetadata) {
+    if let Err(cause) = meta.save(&path) {
+        log::warn!(
+            "Unable to save metadata for path {}: {cause}",
+            path.display()
+        );
+    }
+}
+
+#[inline]
+fn save_tag<P: AsRef<Path>>(key: P, tag: RawTag) {
+    if let Err(cause) = tag.save(key) {
+        log::warn!("Unable to save tag {key:?}: {cause}");
     }
 }
 
