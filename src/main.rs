@@ -29,15 +29,66 @@ struct Arguments {
 
 #[derive(Debug, clap::Subcommand)]
 enum Subcommand {
-    // TODO list files in tag intersections
-    Get { tags: Vec<String> },
-    // TODO lists all tags when empty
-    // TODO lists union of tags from paths
-    List { paths: Paths },
+    /// Gets paths all contained in the given tags.
+    ///
+    /// Paths containing all the given tags are displayed; displays nothing when
+    /// none are found.
+    Get {
+        /// The tags that paths must have.
+        #[arg(required=true)]
+        tags: Vec<String>
+    },
 
-    Tag { paths: Paths, tags: Vec<String> },
-    Untag { paths: Paths, tags: Vec<String> },
-    Clear { paths: Paths },
+    /// Lists all the tags that occur in the given paths.
+    ///
+    /// All tags contained in any of the given paths are displayed; displays
+    /// nothing when none of the paths are tagged.
+    List {
+        /// The paths to collect tags from.
+        ///
+        /// On most Unix platforms, the separator is `:` and on Windows it is
+        /// `;`.
+        paths: Paths
+    },
+
+    /// Tag paths.
+    ///
+    /// Adds tags to the given paths.
+    Tag {
+        /// The paths to tag.
+        ///
+        /// On most Unix platforms, the separator is `:` and on Windows it is
+        /// `;`.
+        paths: Paths,
+
+        /// The tags to add to the given paths.
+        #[arg(required = true)]
+        tags: Vec<String>,
+    },
+
+    /// Untag paths.
+    ///
+    /// Removes tags from the given paths.
+    Untag {
+        /// The paths to untag.
+        ///
+        /// On most Unix platforms, the separator is `:` and on Windows it is
+        /// `;`.
+        paths: Paths,
+
+        /// The tags to remove from the given paths.
+        #[arg(required = true)]
+        tags: Vec<String>,
+    },
+
+    /// Clear all the tags for the given paths.
+    Clear {
+        /// The paths to clear tags.
+        ///
+        /// On most Unix platforms, the separator is `:` and on Windows it is
+        /// `;`.
+        paths: Paths
+    },
 }
 
 impl Subcommand {
@@ -151,6 +202,7 @@ fn load_meta<P: AsRef<Path>>(path: P) -> Option<PathMetadata> {
     }
 }
 
+/// On most Unix platforms, the separator is `:` and on Windows it is `;`.
 #[derive(Clone, Debug)]
 struct Paths {
     inner: std::vec::IntoIter<PathBuf>,
